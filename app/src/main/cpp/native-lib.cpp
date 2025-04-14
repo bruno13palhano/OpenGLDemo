@@ -21,11 +21,18 @@ const char* fragmentShaderSource = R"(
     }
 )";
 
+// Vertex struct
+struct Vertex {
+    float x, y, z;
+};
+
 // OpenGL state
 struct Engine {
     GLuint program;
     GLint positionLoc;
     bool running;
+    int frameCount;
+    float scale;
 };
 
 // Global engine instance
@@ -46,13 +53,10 @@ GLuint compileShader(GLenum type, const char* source) {
     return shader;
 }
 
-// Initialize OpenGL
-void init(struct android_app* app) {
-    g_engine.running = true;
-
-    // Set up OpenGL ES context
-    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    eglInitialize(display, nullptr, nullptr);
+// Initialize EGL
+void initEGL(struct android_app* app, EGLDisplay* display, EGLSurface* surface, EGLContext* context) {
+    *display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    eglInitialize(*display, nullptr, nullptr);
 
     const EGLint configAttributes[] = {
             EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
@@ -63,39 +67,59 @@ void init(struct android_app* app) {
             EGL_NONE
     };
     EGLConfig config;
-    EGLint numConfigs;
-    eglChooseConfig(display, configAttributes, &config, 1, &numConfigs);
+    EGLint  numConfigs;
+    eglChooseConfig(*display, configAttributes, &config, 1, &numConfigs);
 
-    EGLSurface surface = eglCreateWindowSurface(display, config, app->window, nullptr);
+    *surface = eglCreateWindowSurface(*display, config, app->window, nullptr);
 
     const EGLint contextAttributes[] = {
             EGL_CONTEXT_CLIENT_VERSION, 2,
             EGL_NONE
     };
-    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttributes);
-    eglMakeCurrent(display, surface, surface, context);
+    *context = eglCreateContext(*display, config, EGL_NO_CONTEXT, contextAttributes);
+    eglMakeCurrent(*display, *surface, *surface, *context);
+}
 
-    // Create and link shader program
+// Initialize shaders
+void initShaders(GLuint* program, GLint* positionLoc) {
     GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
     GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
-    g_engine.program = glCreateProgram();
-    glAttachShader(g_engine.program, vertexShader);
-    glAttachShader(g_engine.program, fragmentShader);
-    glLinkProgram(g_engine.program);
+    *program = glCreateProgram();
+    glAttachShader(*program, vertexShader);
+    glAttachShader(*program, fragmentShader);
+    glLinkProgram(*program);
 
     GLint success;
-    glGetProgramiv(g_engine.program, GL_LINK_STATUS, &success);
+    glGetProgramiv(*program, GL_LINK_STATUS, &success);
     if (!success) {
         char infoLog[512];
-        glGetProgramInfoLog(g_engine.program, 512, nullptr, infoLog);
+        glGetProgramInfoLog(*program, 512, nullptr, infoLog);
         LOGI("Program linking failed: %s", infoLog);
     }
 
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    g_engine.positionLoc = glGetAttribLocation(g_engine.program, "aPosition");
+    *positionLoc = glGetAttribLocation(*program, "aPosition");
+}
+
+// Initialize OpenGL
+void init(struct android_app* app) {
+    g_engine.running = true;
+    g_engine.frameCount = 0;
+    g_engine.scale = 1.0f;
+
+    EGLDisplay  display;
+    EGLSurface  surface;
+    EGLContext  context;
+    initEGL(app, &display, &surface, &context);
+    initShaders(&g_engine.program, &g_engine.positionLoc);
+
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+void printVertex(const Vertex& v) {
+    LOGI("Vertex: x=%f, y=%f, z=%f", v.x, v.y, v.z);
 }
 
 // Render frame
@@ -103,17 +127,20 @@ void draw() {
     if (!g_engine.running) return;
 
     glClear(GL_COLOR_BUFFER_BIT);
-
     glUseProgram(g_engine.program);
 
     // Triangle vertices (x, y, z)
-    GLfloat vertices[] = {
-            0.0f,  0.5f, 0.0f,  // Top
-            -0.5f, -0.5f, 0.0f,  // Bottom-left
-            0.5f, -0.5f, 0.0f   // Bottom-right
+    Vertex vertices[] = {
+            {0.0f,  0.5f, 0.0f},  // Top
+            {-0.5f, -0.5f, 0.0f},  // Bottom-left
+            {0.5f, -0.5f, 0.0f}   // Bottom-right
     };
 
-    glVertexAttribPointer(g_engine.positionLoc, 3, GL_FLOAT, GL_FALSE, 0, vertices);
+    for(int i = 0; i < 3; i++) {
+        printVertex(vertices[i]);
+    }
+
+    glVertexAttribPointer(g_engine.positionLoc, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), vertices);
     glEnableVertexAttribArray(g_engine.positionLoc);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glDisableVertexAttribArray(g_engine.positionLoc);
@@ -158,6 +185,7 @@ void android_main(struct android_app* app) {
             }
         }
         if (g_engine.running) {
+            LOGI("Frame: %d, Scale: %f", g_engine.frameCount++, g_engine.scale);
             draw();
         }
     }
