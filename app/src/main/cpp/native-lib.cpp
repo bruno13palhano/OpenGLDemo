@@ -26,13 +26,70 @@ struct Vertex {
     float x, y, z;
 };
 
+class Triangle {
+public:
+    GLuint vbo; // Vertex Buffer Object
+    int vertexCount;
+    Vertex vertices[3];
+
+    Triangle(float offsetX, float scale) : vertexCount(3) {
+        vertices[0] = {scale * (0.0f + offsetX),  scale * 0.5f, 0.0f}; // Top
+        vertices[1] = {scale * (-0.5f + offsetX), scale * -0.5f, 0.0f}; // Bottom-left
+        vertices[2] = {scale * (0.5f + offsetX),  scale * -0.5f, 0.0f}; // Bottom-right
+
+        // Log vertices once
+        for (int i = 0; i < vertexCount; i++) {
+            LOGI("Vertex %d: x=%f, y=%f, z=%f", i, vertices[i].x, vertices[i].y, vertices[i].z);
+        }
+
+        swapVertices(2, 0);
+        vbo = 0;
+    }
+
+    void init() {
+        // Create VBO
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    ~Triangle() {
+        if (vbo != 0) {
+            glDeleteBuffers(1, &vbo);
+        }
+    }
+
+    void draw(GLint positionLoc) {
+        if (vbo == 0) {
+            LOGI("Error: VBO not initialized");
+            return;
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), nullptr);
+        glEnableVertexAttribArray(positionLoc);
+        glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+        glDisableVertexAttribArray(positionLoc);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void swapVertices(int i, int j) {
+        Vertex temp = vertices[i];
+        vertices[i] = vertices[j];
+        vertices[j] = temp;
+        LOGI("Swapped vertices %d and %d", i, j);
+    }
+};
+
 // OpenGL state
 struct Engine {
     GLuint program;
     GLint positionLoc;
     bool running;
-    int frameCount;
+    unsigned  int frameCount;
     float scale;
+    Triangle* triangle; // Pointer to Triangle
+    Triangle* triangle2;
 };
 
 // Global engine instance
@@ -107,7 +164,9 @@ void initShaders(GLuint* program, GLint* positionLoc) {
 void init(struct android_app* app) {
     g_engine.running = true;
     g_engine.frameCount = 0;
-    g_engine.scale = 1.0f;
+    g_engine.scale = 0.5f;
+    g_engine.triangle = new Triangle(0.0f, g_engine.scale); // Allocate on heap
+    g_engine.triangle2 = new Triangle(1.0f, g_engine.scale);
 
     EGLDisplay  display;
     EGLSurface  surface;
@@ -115,11 +174,18 @@ void init(struct android_app* app) {
     initEGL(app, &display, &surface, &context);
     initShaders(&g_engine.program, &g_engine.positionLoc);
 
+    if (g_engine.triangle != nullptr) {
+        g_engine.triangle->init();
+    }
+    if (g_engine.triangle2 != nullptr) {
+        g_engine.triangle2->init();
+    }
+
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 }
 
-void printVertex(const Vertex& v) {
-    LOGI("Vertex: x=%f, y=%f, z=%f", v.x, v.y, v.z);
+void printVertex(const Vertex& v, int index) {
+    LOGI("Vertex %d: x=%f, y=%f, z=%f", index, v.x, v.y, v.z);
 }
 
 // Render frame
@@ -129,21 +195,17 @@ void draw() {
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(g_engine.program);
 
-    // Triangle vertices (x, y, z)
-    Vertex vertices[] = {
-            {0.0f,  0.5f, 0.0f},  // Top
-            {-0.5f, -0.5f, 0.0f},  // Bottom-left
-            {0.5f, -0.5f, 0.0f}   // Bottom-right
-    };
-
-    for(int i = 0; i < 3; i++) {
-        printVertex(vertices[i]);
+    if (g_engine.triangle != nullptr) {
+        g_engine.triangle->draw(g_engine.positionLoc);
+    } else {
+        LOGI("Error: Triangle is null");
     }
 
-    glVertexAttribPointer(g_engine.positionLoc, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), vertices);
-    glEnableVertexAttribArray(g_engine.positionLoc);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glDisableVertexAttribArray(g_engine.positionLoc);
+    if (g_engine.triangle2 != nullptr) {
+        g_engine.triangle2->draw(g_engine.positionLoc);
+    } else {
+        LOGI("Error: Triangle 2 is null");
+    }
 
     // Swap buffers (handled by eglSwapBuffers in a real app, simplified here)
     EGLDisplay display = eglGetCurrentDisplay();
@@ -161,6 +223,14 @@ void handle_cmd(struct android_app* app, int32_t cmd) {
             }
             break;
         case APP_CMD_TERM_WINDOW:
+            if (g_engine.triangle != nullptr) {
+                delete g_engine.triangle;
+                g_engine.triangle = nullptr;
+            }
+            if (g_engine.triangle2 != nullptr) {
+                delete g_engine.triangle2;
+                g_engine.triangle2 = nullptr;
+            }
             g_engine.running = false;
             glDeleteProgram(g_engine.program);
             break;
