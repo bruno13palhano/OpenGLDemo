@@ -23,6 +23,9 @@ target_include_directories(
         ${NDK_SYSROOT_INCLUDE}
 )
 
+set(CMAKE_CXX_STANDARD 11) # For std::vector, cmath
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 find_library(log-lib log)
 find_library(GLESv2-lib GLESv2)
 find_library(android-lib android)
